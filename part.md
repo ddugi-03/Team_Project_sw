@@ -1,31 +1,34 @@
-## 백엔드 개발 현황 공유
+# 백엔드 A 개발 현황 및 연동 안내
 
-**담당:** 백엔드 A — FastAPI API 뼈대 및 Ollama AI 통신 클라이언트
+**담당 범위:** FastAPI API 기본 구조 및 Ollama HTTP 클라이언트 구축
 
-### 1. 완료된 작업
+**현재 상태:** 담당 모듈의 초기 구현 및 독립 테스트 완료, 실제 AI 통합 대기
 
-**① FastAPI 서버 구축**
-- FastAPI 기반 백엔드 서버 환경 구성
+### 1. 구현 완료 사항
+
+**FastAPI 서버**
+- FastAPI 서버 기본 구조 및 실행 환경 구축
 - `/api/v1/generate`, `/api/v1/combine` 엔드포인트 구현
-- 현재 두 API는 임의 JSON을 수신하고 Mock 응답을 반환하도록 구현
-- Swagger UI(`/docs`)를 통한 요청·응답 테스트 완료
+- 임의 JSON 객체 수신 및 Mock 응답 반환
+- Swagger UI(`/docs`) 동작 확인
 
-**② Ollama 통신 클라이언트 구현**
-- `httpx.AsyncClient` 기반 비동기 HTTP 통신 구현
-- `generate(model, prompt)`: Ollama `/api/generate` 호출
-- `chat(model, messages)`: Ollama `/api/chat` 호출
-- `OLLAMA_BASE_URL` 환경변수로 서버 주소 설정 가능
-- 비스트리밍 응답(`stream: false`) 지원
-- HTTP 상태 오류 및 연결 오류 감지
-- 모델명과 프롬프트는 외부에서 전달받도록 구성
+**Ollama HTTP 클라이언트**
+- `httpx.AsyncClient` 기반 비동기 통신 구현
+- Ollama `/api/generate`, `/api/chat` 엔드포인트 지원
+- `stream: false` 방식의 JSON 요청 및 응답 수신
+- `OLLAMA_BASE_URL` 환경변수를 통한 서버 주소 설정
+- HTTP 오류 및 연결 실패 시 예외 전달
+- 외부 HTTP 클라이언트 주입 및 비동기 자원 종료 지원
 
-**③ 테스트**
-- 실제 Ollama 서버 없이 `httpx.MockTransport` 기반 단위 테스트 6개 통과
-- 기존 Generate/Combine Mock API 정상 동작 확인
-- Swagger UI 접근 확인
-- 기본 코드 검증 완료
+### 2. 검증 현황
 
-### 2. 현재 구현 상태
+Ollama 서버를 모방하는 `httpx.MockTransport`를 사용해 6개 단위 테스트 통과.
+
+기존 FastAPI Mock 엔드포인트와 Swagger UI 정상 동작 확인.
+
+실제 Ollama 모델 호출은 수행하지 않았음.
+
+### 3. 현재 구현 상태
 
 ```text
 React 프론트엔드
@@ -45,12 +48,10 @@ Ollama 서버 (실제 연동 대기)
 
 현재 FastAPI API와 OllamaClient는 각각 구현되어 있으며, **실제 AI 호출 파이프라인은 아직 연결하지 않은 상태**입니다.
 
-### 3. 이후 진행할 작업
+### 4. 이후 진행할 작업
 
-1. 팀원에게 확정된 API 스키마와 프롬프트 전달받기
-2. 서비스 계층에서 FastAPI 엔드포인트와 OllamaClient 연결
-3. 실제 Ollama 서버를 통한 아이디어 생성·조합 테스트
-4. 전체 요청·응답 및 예외 처리 통합 검증
+1. 확정된 API 스키마 -> 서비스 계층에서 FastAPI 엔드포인트와 OllamaClient 연결
+2. 전체 요청·응답 및 예외 처리 통합 검증
 
 **FastAPI API 뼈대와 Ollama HTTP 클라이언트 구현은 완료되었습니다.**
 
