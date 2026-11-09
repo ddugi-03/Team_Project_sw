@@ -4,6 +4,8 @@
 
 **현재 상태:** 담당 모듈의 초기 구현 및 독립 테스트 완료, 실제 AI 통합 대기
 
+**하단에 fastAPI 서버 테스트 방법 추가.**
+
 ### 1. 구현 완료 사항
 
 **FastAPI 서버**
@@ -56,3 +58,63 @@ Ollama 서버 (실제 연동 대기)
 **FastAPI API 뼈대와 Ollama HTTP 클라이언트 구현은 완료되었습니다.**
 
 오류 및 연동에 대해 언제든 말씀주세요.
+
+##
+## FastAPI 백엔드 로컬 실행 방법
+
+**1. 프로젝트 Clone 후 백엔드 디렉터리로 이동**
+
+```bash
+cd backend
+```
+
+**2. Python 가상환경 생성 (최초 1회)**
+
+```bash
+python -m venv .venv
+```
+
+**3. 가상환경 활성화 (Windows)**
+
+PowerShell:
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+CMD:
+```cmd
+.venv\Scripts\activate.bat
+```
+
+**4. 의존성 설치**
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+**5. FastAPI 서버 실행**
+
+```bash
+python -m uvicorn main:app --reload
+```
+
+**6. Swagger UI 접속**
+
+http://127.0.0.1:8000/docs
+
+Swagger에서 다음 API를 직접 실행할 수 있습니다.
+
+- `POST /api/v1/generate`
+- `POST /api/v1/combine`
+
+현재 두 API는 Mock 응답을 반환하므로, 실제 Ollama 서버 없이 테스트할 수 있습니다.
+
+**7. Ollama 클라이언트 단위 테스트 (선택)**
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+실제 모델 서버 없이 HTTP 통신 클라이언트의 동작을 검증할 수 있습니다.
+
+서버 종료는 터미널에서 `Ctrl + C`를 누르면 됩니다.
