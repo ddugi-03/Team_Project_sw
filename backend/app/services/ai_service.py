@@ -22,11 +22,11 @@ COMMON_SYSTEM_PROMPT = """당신은 창의적이고 실용적인 아이디어를
 
 # [AI 2] Qwen2.5 최적화 파라미터 (창의성·정형성 균형 및 응답 속도 개선)
 OPTIMIZED_OPTIONS = {
-    "temperature": 0.7,      # 창의성과 JSON 규격 안정성의 균형점 (0.6~0.8 권장)
-    "top_p": 0.9,            # 지나치게 엉뚱한 토큰 생성 억제
-    "repeat_penalty": 1.1,   # 동일 단어/문장 반복 방지
-    "num_ctx": 2048,         # 불필요한 컨텍스트 메모리 점유 축소로 속도 향상
-    "num_predict": 1024      # 과도한 길이 생성 방지 (Latency 단축)
+    "temperature": 0.7,
+    "top_p": 0.9,
+    "repeat_penalty": 1.1,
+    "num_ctx": 1024,      # 2048 -> 1024로 축소 (프롬프트가 짧으므로 절반으로 충분)
+    "num_predict": 512,   # 1024 -> 512로 축소 (JSON 3개 생성에 딱 맞는 길이)
 }
 
 
