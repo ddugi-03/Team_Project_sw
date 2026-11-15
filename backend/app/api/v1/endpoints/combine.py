@@ -7,6 +7,8 @@ from app.services.ai_service import combine_ideas_service
 router = APIRouter(tags=["combine"])
 
 
+# TODO(FE): 프론트엔드 idea_ids 요청을 백엔드 selected_ideas 계약과 조율.
+# TODO(BE-B): IdeaCombineRequest와 CombineTestRequest 통일 여부 확인.
 class CombineTestRequest(BaseModel):
     selected_ideas: List[dict[str, Any]] = Field(
         ...,

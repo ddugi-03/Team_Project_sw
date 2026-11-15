@@ -1,15 +1,18 @@
 import time
 import logging
+import os
 import httpx
 from typing import List, Dict, Any
+from app.clients.ollama import OllamaClient
 from app.schemas.idea import IdeaItem
 from app.core.exceptions import parse_and_validate_ai_json, AIResponseParseException
 
 logger = logging.getLogger(__name__)
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
+# TODO(AI-2): OLLAMA_BASE_URL, OLLAMA_MODEL 및 생성 옵션 최종값 확정.
 MODEL_NAME = "qwen2.5:7b"
 
+# TODO(AI-1): 프롬프트 변경 시 generate/combine 서비스 계층 연동 확인.
 # [AI 1] 공통 System Prompt: JSON 규격 강제 및 중국어/영어 혼용 방지
 COMMON_SYSTEM_PROMPT = """당신은 창의적이고 실용적인 아이디어를 도출하는 브레인스토밍 전문가입니다.
 반드시 아래 규칙을 엄격히 준수하여 순수 JSON 형식으로만 응답하세요.
@@ -34,28 +37,23 @@ async def _call_ollama(system_prompt: str, user_prompt: str, task_name: str) -> 
     """
     Ollama API 공통 호출, 응답 속도(Latency) 측정 및 JSON 파싱 검증 헬퍼 함수
     """
-    payload = {
-        "model": MODEL_NAME,
-        "system": system_prompt,
-        "prompt": user_prompt,
-        "format": "json",
-        "stream": False,
-        "options": OPTIMIZED_OPTIONS
-    }
-
     start_time = time.perf_counter()
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(OLLAMA_URL, json=payload)
-            response.raise_for_status()
-
-            data = response.json()
+        async with OllamaClient(timeout=60.0) as client:
+            data = await client.generate(
+                model=os.getenv("OLLAMA_MODEL", MODEL_NAME),
+                prompt=user_prompt,
+                system=system_prompt,
+                format="json",
+                options=OPTIMIZED_OPTIONS,
+            )
             raw_response = data.get("response", "")
 
         elapsed = time.perf_counter() - start_time
         logger.info(f"[AI Latency] {task_name} 완료: {elapsed:.2f}초 소요")
         print(f"[AI Latency] {task_name} 완료: {elapsed:.2f}초 소요")
 
+        # TODO(BE-B): execute_with_retry 적용 여부와 서비스 반환 계약 확인.
         return parse_and_validate_ai_json(raw_response)
 
     except httpx.HTTPError as e:
