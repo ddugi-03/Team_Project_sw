@@ -13,7 +13,7 @@ from uuid import UUID
 import httpx
 
 from app.clients.ollama import OllamaClient
-from app.core.exceptions import AIResponseParseException
+from app.core.exceptions import OllamaConnectionException
 from app.schemas.idea import IdeaResponse
 from app.services import ai_service
 from main import create_app
@@ -152,7 +152,11 @@ class APIIntegrationTests(unittest.IsolatedAsyncioTestCase):
             ("generate", {"keyword": "학습", "count": 11}),
             ("generate", {"keyword": "학습", "creativity_level": -0.1}),
             ("generate", {"keyword": "학습", "creativity_level": 1.1}),
-            ("combine", {"idea_ids": ["one", "two"]}),
+            ("combine", {"idea_ids": []}),
+            ("combine", {"idea_ids": ["one", "one"]}),
+            ("combine", {"idea_ids": ["one", ""]}),
+            ("combine", {}),
+            ("combine", {"idea_ids": ["one", "two"], "selected_ideas": self.ideas}),
             ("combine", {"selected_ideas": self.ideas[:1]}),
             ("combine", {"selected_ideas": self.ideas, "count": 0}),
             ("combine", {"selected_ideas": self.ideas, "count": 6}),
@@ -163,29 +167,76 @@ class APIIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status_code, 422)
         self.assertEqual(self.requests, [])
 
-    async def test_existing_http_error_mapping_is_preserved(self) -> None:
+    async def test_ollama_http_error_has_structured_response(self) -> None:
         self.ollama_status = 503
-        with self.assertRaisesRegex(AIResponseParseException, "Ollama API 통신 실패"):
-            await self.api.post("/api/v1/generate", json={"keyword": "학습"})
+        response = await self.api.post("/api/v1/generate", json={"keyword": "학습"})
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error_code"], "AI_PARSE_ERROR")
         self.assertEqual(len(self.requests), 1)
 
-    async def test_existing_connection_and_timeout_mapping_is_preserved(self) -> None:
+    async def test_connection_and_timeout_errors_have_structured_response(self) -> None:
+        # TODO(BE-B): 현재 ai_service는 통신 오류도 AIResponseParseException으로 변환한다.
+        # OllamaConnectionException을 발생시키도록 BE-B가 정책을 확정하면 503으로 구분 가능.
         for error in (httpx.ConnectError, httpx.ReadTimeout):
             with self.subTest(error=error):
                 self.ollama_error = error
-                with self.assertRaisesRegex(AIResponseParseException, "Ollama API 통신 실패"):
-                    await self.api.post("/api/v1/combine", json={"selected_ideas": self.ideas})
+                response = await self.api.post("/api/v1/combine", json={"selected_ideas": self.ideas})
+                self.assertEqual(response.status_code, 502)
+                self.assertEqual(response.json()["error_code"], "AI_PARSE_ERROR")
+
+    async def test_be_b_connection_handler_is_registered(self) -> None:
+        with patch(
+            "app.api.v1.endpoints.generate.generate_ideas_service",
+            side_effect=OllamaConnectionException(),
+        ):
+            response = await self.api.post("/api/v1/generate", json={"keyword": "학습"})
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["error_code"], "OLLAMA_CONNECTION_ERROR")
 
     async def test_existing_parser_accepts_markdown_json(self) -> None:
         self.ollama_response = {"response": f"```json\n{json.dumps({'ideas': self.ideas})}\n```"}
         response = await self.api.post("/api/v1/generate", json={"keyword": "학습"})
         self.assert_idea_response(response, "아이디어 생성 완료")
 
-    async def test_existing_parser_failure_is_preserved(self) -> None:
+    async def test_existing_parser_failure_has_structured_response(self) -> None:
         self.ollama_response = {"response": "invalid model output"}
-        with self.assertRaises(AIResponseParseException):
-            await self.api.post("/api/v1/generate", json={"keyword": "학습"})
+        response = await self.api.post("/api/v1/generate", json={"keyword": "학습"})
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error_code"], "AI_PARSE_ERROR")
         self.assertEqual(len(self.requests), 1)
+
+    async def test_frontend_id_only_combine_and_recombine(self) -> None:
+        # 실제 FE: generate로 받은 idea.id 목록만 combine에 전달한다.
+        generated = await self.api.post("/api/v1/generate", json={"keyword": "학습", "count": 2})
+        self.assertEqual(generated.status_code, 200)
+        ids = [idea["id"] for idea in generated.json()["ideas"]]
+
+        combined = await self.api.post("/api/v1/combine", json={"idea_ids": ids})
+        self.assert_idea_response(combined, "아이디어 조합 완료")
+        self.assertEqual(len(self.requests), 2)
+        payload = json.loads(self.requests[1].content)
+        for idea in self.ideas:
+            self.assertIn(idea["title"], payload["prompt"])
+            self.assertIn(idea["description"], payload["prompt"])
+
+        # 생성된 조합 결과도 다음 조합 요청에서 ID로 다시 사용할 수 있어야 한다.
+        next_id = combined.json()["ideas"][0]["id"]
+        subsequent = await self.api.post("/api/v1/combine", json={"idea_ids": [ids[0], next_id]})
+        self.assertEqual(subsequent.status_code, 200)
+        self.assertEqual(len(self.requests), 3)
+
+    async def test_unknown_or_expired_idea_ids_return_404(self) -> None:
+        response = await self.api.post("/api/v1/combine", json={"idea_ids": ["missing-a", "missing-b"]})
+        self.assertEqual(response.status_code, 404)
+        self.assertIn("다시 생성", response.json()["detail"])
+        self.assertEqual(len(self.requests), 0)
+
+    async def test_registry_is_isolated_to_app_instance(self) -> None:
+        generated = await self.api.post("/api/v1/generate", json={"keyword": "학습"})
+        ids = [item["id"] for item in generated.json()["ideas"]]
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app()), base_url="http://new.test") as new_api:
+            response = await new_api.post("/api/v1/combine", json={"idea_ids": ids})
+        self.assertEqual(response.status_code, 404)
 
     async def test_allowed_origin_is_returned_on_generate_response(self) -> None:
         response = await self.api.post(
