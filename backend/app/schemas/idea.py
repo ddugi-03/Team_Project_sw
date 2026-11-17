@@ -1,5 +1,5 @@
 from typing import List, Optional, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 import uuid
 
 # ==========================================
@@ -22,6 +22,18 @@ class IdeaCombineRequest(BaseModel):
         default="두 아이디어의 장점을 결합하여 새로운 서비스 구상", 
         description="조합 방향성 및 추가 요구조건"
     )
+
+    count: int = Field(default=2, ge=1, le=5)
+
+    @field_validator("selected_ideas")
+    @classmethod
+    def validate_selection(cls, ideas):
+        ids = [idea.id for idea in ideas]
+        if any(not idea.id.strip() or not idea.title.strip() or not idea.description.strip() for idea in ideas):
+            raise ValueError("선택한 아이디어의 id, title, description은 비어 있을 수 없습니다.")
+        if len(ids) != len(set(ids)):
+            raise ValueError("서로 다른 아이디어를 선택해 주세요.")
+        return ideas
 
 # ==========================================
 # 2. 핵심 엔티티 스키마 (Core Entity)

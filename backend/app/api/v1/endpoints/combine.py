@@ -56,7 +56,7 @@ async def combine(request: CombineTestRequest, http_request: Request) -> IdeaRes
     ideas = await combine_ideas_service(
         selected_ideas=selected_ideas,
         direction=request.direction or "두 아이디어의 장점 결합",
-        count=request.count
+        count=request.count,
     )
     # BE-A: 결합된 아이디어도 다시 선택·조합할 수 있어야 하므로 보관.
     http_request.app.state.idea_registry.remember(ideas)
