@@ -3,43 +3,52 @@ import logging
 import os
 import httpx
 import uuid
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from app.clients.ollama import OllamaClient
 from app.schemas.idea import IdeaItem
 from app.core.exceptions import execute_with_retry, AIResponseParseException, OllamaConnectionException
 
 logger = logging.getLogger(__name__)
 
-# TODO(AI-2): OLLAMA_BASE_URL, OLLAMA_MODEL 및 생성 옵션 최종값 확정.
+# [AI-2 확정] 기본 모델명 및 추론 최적화 옵션
 MODEL_NAME = "qwen2.5:7b"
 
-# TODO(AI-1): 프롬프트 변경 시 generate/combine 서비스 계층 연동 확인.
-# [AI 1] 공통 System Prompt: JSON 규격 강제 및 중국어/영어 혼용 방지
-COMMON_SYSTEM_PROMPT = """당신은 창의적이고 실용적인 아이디어를 도출하는 브레인스토밍 전문가입니다.
-반드시 아래 규칙을 엄격히 준수하여 순수 JSON 형식으로만 응답하세요.
+# [AI-1 확정] 공통 System Prompt: JSON 규격 100% 강제 및 외국어(한자/중국어/영어) 혼용 완벽 차단
+COMMON_SYSTEM_PROMPT = """당신은 한국의 IT 및 비즈니스 아이디어 브레인스토밍 전문가입니다.
+사용자의 요청에 따라 독창적이고 실현 가능한 아이디어를 도출하며, 반드시 아래 규칙을 엄격히 준수하여 순수 JSON 객체로만 응답하세요.
 
-[필수 규칙]
-1. 모든 텍스트는 오직 자연스러운 순수 한국어로만 작성하세요. 한자, 중국어, 불필요한 영어 단어를 절대 섞지 마세요.
-2. 인사말, 마크다운 기호(```json 등), 부연 설명 없이 오직 유효한 JSON 객체만 출력하세요.
-3. 최상위 키는 반드시 "ideas"여야 하며, 각 요소는 "title", "description", "tags" 키만 가집니다.
-4. "tags"는 '#' 기호 없는 핵심 한국어 키워드 3개의 문자열 리스트로 작성하세요."""
+[절대 규칙]
+1. 언어 제한: 모든 텍스트는 오직 자연스러운 '순수 한국어'로만 작성하세요. 중국어(한자), 일본어, 불필요한 영단어를 절대 섞지 마세요.
+2. 출력 형식: 인사말, 마크다운 코드 블록(```json 등), 부연 설명 없이 오직 중괄호({ })로 시작하고 끝나는 유효한 JSON만 출력하세요.
+3. 스키마 고정: 최상위 키는 반드시 "ideas" 배열이어야 하며, 배열 안의 각 객체는 반드시 "title", "description", "tags" 3개의 키만 가져야 합니다. (임의로 다른 키를 추가하거나 누락하지 마세요.)
+4. 태그 규칙: "tags"는 '#' 기호가 없는 핵심 한국어 명사 키워드 3개로 구성된 문자열 배열(["키워드1", "키워드2", "키워드3"])로 작성하세요."""
 
-# [AI 2] Qwen2.5 최적화 파라미터 (창의성·정형성 균형 및 응답 속도 개선)
+# [AI-2 확정] Qwen2.5 최적화 파라미터 (최대 10개 생성 시 JSON 잘림 방지를 위해 num_ctx, num_predict 확장)
 OPTIMIZED_OPTIONS = {
     "temperature": 0.7,
     "top_p": 0.9,
     "repeat_penalty": 1.1,
-    "num_ctx": 1024,      # 2048 -> 1024로 축소 (프롬프트가 짧으므로 절반으로 충분)
-    "num_predict": 512,   # 1024 -> 512로 축소 (JSON 3개 생성에 딱 맞는 길이)
+    "num_ctx": 2048,      # 다중 아이디어 조합 및 프롬프트 길이를 고려해 2048 확보
+    "num_predict": 1536,  # 아이디어 최대 10개 생성 시 JSON이 중간에 잘리지 않도록 512 -> 1536으로 상향
 }
 
 
-async def _call_ollama(system_prompt: str, user_prompt: str, task_name: str) -> List[IdeaItem]:
+async def _call_ollama(
+    system_prompt: str, 
+    user_prompt: str, 
+    task_name: str,
+    temperature: Optional[float] = None
+) -> List[IdeaItem]:
     """
     Ollama API 공통 호출, 응답 속도(Latency) 측정 및 JSON 파싱 검증 헬퍼 함수
     """
     start_time = time.perf_counter()
     
+    # 요청별 creativity_level(temperature)이 넘어오면 동적으로 반영
+    request_options = dict(OPTIMIZED_OPTIONS)
+    if temperature is not None:
+        request_options["temperature"] = temperature
+
     try:
         async with OllamaClient(timeout=60.0) as client:
             async def request_ai_text() -> str:
@@ -50,17 +59,16 @@ async def _call_ollama(system_prompt: str, user_prompt: str, task_name: str) -> 
                         prompt=user_prompt,
                         system=system_prompt,
                         format="json",
-                        options=OPTIMIZED_OPTIONS,
+                        options=request_options,
                     )
                 except ValueError as e:
-                    # BE-B 재시도 정책: Ollama 응답 본문의 JSON 형식 오류도 파싱 실패로 취급.
                     raise AIResponseParseException("Ollama HTTP 응답 JSON 형식이 올바르지 않습니다.") from e
                 raw_response = data.get("response")
                 if not isinstance(raw_response, str):
                     raise AIResponseParseException("Ollama 응답의 response 필드가 문자열이 아닙니다.")
                 return raw_response
 
-            # BE-B의 파싱 실패 재시도 정책 적용 (최대 3회 호출).
+            # 파싱 실패 시 최대 3회 재시도
             ideas = await execute_with_retry(request_ai_text, max_retries=3)
 
         elapsed = time.perf_counter() - start_time
@@ -85,83 +93,92 @@ async def _call_ollama(system_prompt: str, user_prompt: str, task_name: str) -> 
 async def generate_ideas_service(
     topic: str,
     count: int = 3,
-    category: str = "일반"
+    category: str = "일반",
+    creativity_level: float = 0.7
 ) -> List[IdeaItem]:
     """
     [AI 1] 주제를 받아 Ollama AI를 통해 아이디어를 생성하고 Pydantic 객체 리스트로 반환
     """
-    user_prompt = f"""다음 조건에 맞춰 서로 다른 독창적인 아이디어 {count}개를 생성하세요.
+    user_prompt = f"""다음 조건에 맞춰 서로 관점이 다른 독창적인 아이디어 {count}개를 생성하세요.
 
-- 주제 키워드: {topic}
-- 분야(카테고리): {category}
-- 생성 개수: 정확히 {count}개
+[입력 조건]
+- 핵심 주제(키워드): {topic}
+- 적용 분야(카테고리): {category}
+- 필수 생성 개수: 정확히 {count}개 (부족하거나 초과하지 말 것)
 
 [작성 가이드]
-1. title: 호기심을 끄는 구체적이고 명확한 서비스/아이디어 제목
-2. description: 핵심 기능, 주요 타겟, 기대 효과를 포함한 2~3문장의 구체적인 설명
-3. tags: 핵심 한국어 키워드 3개 (예: ["인공지능", "일정관리", "생산성"])
+1. title: 직관적이고 호기심을 끄는 구체적인 아이디어 제목 (20자 이내 권장)
+2. description: 누가(타겟), 어떤 문제를 해결하기 위해, 어떤 기능을 쓰는지와 기대 효과를 포함한 구체적인 설명 (공백 포함 80~120자 내외, 2~3문장)
+3. tags: 아이디어의 핵심 특징을 나타내는 한국어 명사 키워드 정확히 3개
 
-[출력 JSON 형식]
+[출력 JSON 형식 및 작성 예시]
 {{
   "ideas": [
     {{
-      "title": "...",
-      "description": "...",
-      "tags": ["...", "...", "..."]
+      "title": "스마트 텀블러 자동 세척 구독함",
+      "description": "캠퍼스 내 다회용 컵 사용을 늘리기 위해 사물함 형태의 무인 세척기를 설치하는 서비스입니다. 학생들은 사용한 텀블러를 넣고 앱으로 살균 세척을 요청해 위생과 편의성을 동시에 챙길 수 있습니다.",
+      "tags": ["친환경", "무인세척", "구독서비스"]
     }}
   ]
 }}"""
 
-    return await _call_ollama(COMMON_SYSTEM_PROMPT, user_prompt, f"아이디어 생성({topic})")
+    return await _call_ollama(
+        COMMON_SYSTEM_PROMPT, 
+        user_prompt, 
+        f"아이디어 생성({topic}, {count}개)",
+        temperature=creativity_level
+    )
 
 
 async def combine_ideas_service(
     selected_ideas: List[IdeaItem],
-    direction: str = "두 아이디어의 장점 결합",
+    direction: str = "두 아이디어의 장점을 결합하여 새로운 서비스 구상",
     count: int = 2
 ) -> List[IdeaItem]:
     """
-    [AI 1] 선택된 2개 이상의 아이디어를 결합해 시너지 아이디어를 생성
+    [AI 2] 선택된 2개 이상의 아이디어를 결합해 시너지 아이디어를 생성
     """
-    # 기존 dict 호출도 동일한 모델로 검증합니다.
     selected_ideas = [IdeaItem.model_validate(idea) for idea in selected_ideas]
     if len(selected_ideas) < 2 or len({idea.id for idea in selected_ideas}) != len(selected_ideas):
         raise ValueError("서로 다른 아이디어를 두 개 이상 선택해 주세요.")
+    
     parent_ids = [idea.id for idea in selected_ideas]
     ideas_formatted = "\n".join(
         [
-            f"{idx + 1}. 제목: {idea.title} / 설명: {idea.description}"
+            f"- 아이디어 {idx + 1}: [{idea.title}] {idea.description} (키워드: {', '.join(idea.tags)})"
             for idx, idea in enumerate(selected_ideas)
         ]
     )
 
-    user_prompt = f"""아래 선택된 기존 아이디어들의 핵심 장점을 결합하여 새로운 융합 아이디어 {count}개를 생성하세요.
+    user_prompt = f"""아래에 제시된 기존 아이디어들의 핵심 메커니즘과 장점을 유기적으로 융합하여, 새로운 시너지가 나는 제3의 아이디어 {count}개를 도출하세요.
 
-[선택된 아이디어 목록]
+[결합할 원본 아이디어 목록]
 {ideas_formatted}
 
-[조합 방향성]
+[융합 방향성 및 요구사항]
 {direction}
+- 필수 생성 개수: 정확히 {count}개
 
-[작성 가이드]
-1. 단순 나열이 아닌, 기존 아이디어들이 결합되어 새로운 가치를 만드는 시너지 아이디어를 제안하세요.
-2. title: 융합된 특징이 드러나는 새로운 아이디어 제목
-3. description: 어떻게 기존 아이디어들이 결합되었는지와 핵심 가치를 2~3문장으로 설명
-4. tags: 핵심 한국어 키워드 3개
+[시너지 도출 가이드]
+1. 단순 나열 금지: 'A 기능과 B 기능을 함께 제공한다' 식의 1차원적인 합치기를 피하고, 두 아이디어가 만나 기존에 없던 새로운 가치를 만드는 화학적 결합을 제안하세요.
+2. title: 융합된 시너지의 특징이 한눈에 드러나는 매력적인 제목 (20자 이내 권장)
+3. description: 원본 아이디어들의 어떤 요소가 어떻게 결합되었는지, 그리고 이를 통해 사용자에게 어떤 새로운 혜택을 주는지 2~3문장(공백 포함 80~120자 내외)으로 명확히 설명하세요.
+4. tags: 융합된 아이디어를 대표하는 핵심 한국어 명사 키워드 정확히 3개
 
 [출력 JSON 형식]
 {{
   "ideas": [
     {{
-      "title": "...",
-      "description": "...",
-      "tags": ["...", "...", "..."]
+      "title": "융합된 시너지 아이디어 제목",
+      "description": "첫 번째 아이디어의 핵심 기술과 두 번째 아이디어의 보상 체계를 결합한 새로운 서비스입니다. 사용자가 특정 행동을 완료하면 자동으로 맞춤형 혜택을 제공하여 참여율을 극대화합니다.",
+      "tags": ["핵심키워드1", "핵심키워드2", "핵심키워드3"]
     }}
   ]
 }}"""
 
-    results = await _call_ollama(COMMON_SYSTEM_PROMPT, user_prompt, "아이디어 조합")
-    # 모델이 반환한 ID/계보를 신뢰하지 않고 서버에서 직접 부모만 확정합니다.
+    results = await _call_ollama(COMMON_SYSTEM_PROMPT, user_prompt, f"아이디어 조합({len(selected_ideas)}개 결합 -> {count}개 생성)")
+    
+    # 서버에서 직접 고유 ID와 부모 ID(parent_ids) 계보를 확정
     return [
         idea.model_copy(update={"id": str(uuid.uuid4()), "parent_ids": list(parent_ids)})
         for idea in results
