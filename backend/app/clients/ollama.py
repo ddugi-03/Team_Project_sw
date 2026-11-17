@@ -21,16 +21,28 @@ class OllamaClient:
         self._http_client = http_client
         self._owns_http_client = http_client is None
 
-    async def generate(self, model: str, prompt: str) -> dict[str, Any]:
+    async def generate(
+        self,
+        model: str,
+        prompt: str,
+        *,
+        system: str | None = None,
+        format: str | dict[str, Any] | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Call Ollama's /api/generate endpoint without streaming."""
-        return await self._post(
-            "/api/generate",
-            {
-                "model": model,
-                "prompt": prompt,
-                "stream": False,
-            },
-        )
+        payload: dict[str, Any] = {
+            "model": model,
+            "prompt": prompt,
+            "stream": False,
+        }
+        if system is not None:
+            payload["system"] = system
+        if format is not None:
+            payload["format"] = format
+        if options is not None:
+            payload["options"] = options
+        return await self._post("/api/generate", payload)
 
     async def chat(
         self,
