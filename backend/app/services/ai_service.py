@@ -1,9 +1,10 @@
 import time
 import logging
 import httpx
-from typing import List, Dict, Any
+import uuid
+from typing import List
 from app.schemas.idea import IdeaItem
-from app.core.exceptions import parse_and_validate_ai_json, AIResponseParseException
+from app.core.exceptions import parse_and_validate_ai_json, AIResponseParseException, OllamaConnectionException
 
 logger = logging.getLogger(__name__)
 
@@ -58,10 +59,18 @@ async def _call_ollama(system_prompt: str, user_prompt: str, task_name: str) -> 
 
         return parse_and_validate_ai_json(raw_response)
 
-    except httpx.HTTPError as e:
+    except httpx.TimeoutException as e:
+        logger.warning("[AI Timeout] %s (%.2fs)", task_name, time.perf_counter() - start_time)
+        raise OllamaConnectionException("AI 응답 대기 시간을 초과했습니다. 잠시 후 다시 시도해 주세요.") from e
+    except httpx.RequestError as e:
+        logger.warning("[AI Connection Error] %s: %s", task_name, type(e).__name__)
+        raise OllamaConnectionException() from e
+    except httpx.HTTPStatusError as e:
         elapsed = time.perf_counter() - start_time
         logger.error(f"[AI Error] {task_name} 실패 ({elapsed:.2f}초): {str(e)}")
-        raise AIResponseParseException(f"Ollama API 통신 실패: {str(e)}")
+        raise OllamaConnectionException("AI 모델 서버가 요청을 처리하지 못했습니다.") from e
+    except (ValueError, AttributeError, TypeError) as e:
+        raise AIResponseParseException("Ollama 응답 형식이 올바르지 않습니다.") from e
 
 
 async def generate_ideas_service(
@@ -98,16 +107,21 @@ async def generate_ideas_service(
 
 
 async def combine_ideas_service(
-    selected_ideas: List[Dict[str, Any]],
+    selected_ideas: List[IdeaItem],
     direction: str = "두 아이디어의 장점 결합",
     count: int = 2
 ) -> List[IdeaItem]:
     """
     [AI 1] 선택된 2개 이상의 아이디어를 결합해 시너지 아이디어를 생성
     """
+    # 기존 dict 호출도 동일한 모델로 검증합니다.
+    selected_ideas = [IdeaItem.model_validate(idea) for idea in selected_ideas]
+    if len(selected_ideas) < 2 or len({idea.id for idea in selected_ideas}) != len(selected_ideas):
+        raise ValueError("서로 다른 아이디어를 두 개 이상 선택해 주세요.")
+    parent_ids = [idea.id for idea in selected_ideas]
     ideas_formatted = "\n".join(
         [
-            f"{idx + 1}. 제목: {idea.get('title', '')} / 설명: {idea.get('description', '')}"
+            f"{idx + 1}. 제목: {idea.title} / 설명: {idea.description}"
             for idx, idea in enumerate(selected_ideas)
         ]
     )
@@ -137,4 +151,10 @@ async def combine_ideas_service(
   ]
 }}"""
 
-    return await _call_ollama(COMMON_SYSTEM_PROMPT, user_prompt, "아이디어 조합")
+    results = await _call_ollama(COMMON_SYSTEM_PROMPT, user_prompt, "아이디어 조합")
+    # 모델이 반환한 ID/계보를 신뢰하지 않고 서버에서 직접 부모만 확정합니다.
+    return [
+        idea.model_copy(update={"id": str(uuid.uuid4()), "parent_ids": list(parent_ids)})
+        for idea in results
+    ]
+
