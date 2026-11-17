@@ -2,6 +2,7 @@ import time
 import logging
 import os
 import httpx
+import uuid
 from typing import List, Dict, Any
 from app.clients.ollama import OllamaClient
 from app.schemas.idea import IdeaItem
@@ -38,6 +39,7 @@ async def _call_ollama(system_prompt: str, user_prompt: str, task_name: str) -> 
     Ollama API 공통 호출, 응답 속도(Latency) 측정 및 JSON 파싱 검증 헬퍼 함수
     """
     start_time = time.perf_counter()
+    
     try:
         async with OllamaClient(timeout=60.0) as client:
             data = await client.generate(
