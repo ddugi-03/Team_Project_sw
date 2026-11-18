@@ -26,6 +26,7 @@ class OllamaClient:
         model: str,
         prompt: str,
         *,
+        think: bool | None = None,
         system: str | None = None,
         format: str | dict[str, Any] | None = None,
         options: dict[str, Any] | None = None,
@@ -36,6 +37,8 @@ class OllamaClient:
             "prompt": prompt,
             "stream": False,
         }
+        if think is not None:
+            payload["think"] = think
         if system is not None:
             payload["system"] = system
         if format is not None:

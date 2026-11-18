@@ -13,6 +13,35 @@ logger = logging.getLogger(__name__)
 # [AI-2 확정] 기본 모델명 및 추론 최적화 옵션
 MODEL_NAME = "qwen2.5:7b"
 
+
+def demo_mode() -> bool:
+    return os.getenv("OLLAMA_DEMO_MODE", "").lower() in {"1", "true", "yes"}
+
+
+DEMO_SYSTEM_PROMPT = """한국어 아이디어를 JSON으로만 답하세요.
+각 아이디어는 title, description, tags 필드를 가집니다. tags는 관련 키워드 3개입니다.
+제목은 15자, 설명은 30자 내외의 완결된 한 문장으로 쓰세요. 설명은 '합니다'로 끝내세요.
+사용자가 바로 쓸 수 있는 구체적인 앱 기능을 제안하세요. 전문용어 나열과 부연 설명은 쓰지 마세요."""
+
+
+def demo_response_schema(count: int | None) -> dict:
+    return {
+        "type": "object", "required": ["ideas"], "additionalProperties": False,
+        "properties": {"ideas": {
+            "type": "array", "minItems": count or 1, "maxItems": count or 10,
+            "items": {
+                "type": "object", "required": ["title", "description", "tags"],
+                "additionalProperties": False,
+                "properties": {
+                    "title": {"type": "string", "minLength": 1, "maxLength": 30},
+                    "description": {"type": "string", "minLength": 1, "maxLength": 120},
+                    "tags": {"type": "array", "minItems": 3, "maxItems": 3,
+                             "items": {"type": "string", "minLength": 1, "maxLength": 15}},
+                },
+            },
+        }},
+    }
+
 # [AI-1 확정] 공통 System Prompt: JSON 규격 100% 강제 및 외국어(한자/중국어/영어) 혼용 완벽 차단
 COMMON_SYSTEM_PROMPT = """당신은 한국의 IT 및 비즈니스 아이디어 브레인스토밍 전문가입니다.
 사용자의 요청에 따라 독창적이고 실현 가능한 아이디어를 도출하며, 반드시 아래 규칙을 엄격히 준수하여 순수 JSON 객체로만 응답하세요.
@@ -44,6 +73,10 @@ async def _call_ollama(
     Ollama API 공통 호출, 응답 속도(Latency) 측정 및 JSON 파싱 검증 헬퍼 함수
     """
     start_time = time.perf_counter()
+    generation_settings = {}
+    if demo_mode():
+        system_prompt = DEMO_SYSTEM_PROMPT
+        generation_settings["think"] = False
     
     # 요청별 creativity_level(temperature)이 넘어오면 동적으로 반영
     request_options = dict(OPTIMIZED_OPTIONS)
@@ -56,11 +89,12 @@ async def _call_ollama(
                 """Ollama에 한 번 요청하고 원문 응답 문자열을 반환한다."""
                 try:
                     data = await client.generate(
-                        model=os.getenv("OLLAMA_MODEL", MODEL_NAME),
+                        model=os.getenv("OLLAMA_MODEL", "qwen3:1.7b" if demo_mode() else MODEL_NAME),
                         prompt=user_prompt,
                         system=system_prompt,
-                        format="json",
+                        format=demo_response_schema(expected_count) if demo_mode() else "json",
                         options=request_options,
+                        **generation_settings,
                     )
                 except ValueError as e:
                     raise AIResponseParseException("Ollama HTTP 응답 JSON 형식이 올바르지 않습니다.") from e
@@ -125,6 +159,9 @@ async def generate_ideas_service(
   ]
 }}"""
 
+    if demo_mode():
+        user_prompt = f"주제: {topic}\n분야: {category}\n서로 다른 아이디어를 정확히 {count}개 생성하세요."
+
     return await _call_ollama(
         COMMON_SYSTEM_PROMPT, 
         user_prompt, 
@@ -178,6 +215,15 @@ async def combine_ideas_service(
     }}
   ]
 }}"""
+
+    if demo_mode():
+        ideas_formatted = "\n".join(
+            f"{idx + 1}. {idea.title}: {idea.description}" for idx, idea in enumerate(selected_ideas)
+        )
+        user_prompt = (
+            f"다음 아이디어들의 장점을 모두 결합한 새 아이디어를 정확히 {count}개 만드세요.\n"
+            f"{ideas_formatted}\n방향: {direction}"
+        )
 
     results = await _call_ollama(COMMON_SYSTEM_PROMPT, user_prompt, f"아이디어 조합({len(selected_ideas)}개 결합 -> {count}개 생성)", expected_count=count)
     
