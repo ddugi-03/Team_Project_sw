@@ -7,6 +7,9 @@ const normalize = (items) => items.map((item, index) => ({
   title: item.title || `아이디어 ${index + 1}`,
   description: item.description || '',
   tags: Array.isArray(item.tags) ? item.tags : [],
+  parentIds: Array.isArray(item.parent_ids) && item.parent_ids.length
+    ? item.parent_ids
+    : item.parentIds?.length ? item.parentIds : undefined,
 }))
 
 const errorMessage = (error) => {
@@ -46,6 +49,10 @@ export const useIdeaStore = create((set, get) => ({
   clearSelection: () => set((state) => state.isCombining ? {} : { selectedIds: [] }),
   generateIdeas: async (params) => {
     if (get().isGenerating || get().isCombining) return
+    if (!Number.isInteger(params.count) || params.count < 1 || params.count > 10 || !params.keyword?.trim()) {
+      set({ notice: { type: 'error', text: '주제와 생성 개수(1~10)를 확인해 주세요.' } })
+      return
+    }
     set({ isGenerating: true, notice: null })
     try {
       const result = await requestIdeas(params)
@@ -70,11 +77,11 @@ export const useIdeaStore = create((set, get) => ({
     const ids = [...state.selectedIds]
     set({ isCombining: true, notice: null })
     try {
-      const result = await requestCombination(ids)
+      const result = await requestCombination(parents)
       if (!Array.isArray(result?.ideas) || !result.ideas.length) throw new Error('INVALID_RESPONSE')
       const added = normalize(result.ideas.map((idea) => ({
         ...idea,
-        parentIds: ids,
+        parentIds: idea.parent_ids?.length ? idea.parent_ids : ids,
       })))
       set((current) => ({
         ideas: [...current.ideas, ...added],

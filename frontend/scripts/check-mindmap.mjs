@@ -18,7 +18,7 @@ try {
   const { default: App } = await server.ssrLoadModule('/src/App.jsx')
   assert.deepEqual(store.getState().ideas, [])
   assert.ok(renderToString(createElement(App)).includes('주제를 입력하면'))
-  const items = Array.from({ length: 7 }, (_, i) => ({ id: `server-${i}`, title: `테스트 ${i}`, tags: [] }))
+  const items = Array.from({ length: 7 }, (_, i) => ({ id: `server-${i}`, title: `테스트 ${i}`, description: `설명 ${i}`, tags: [] }))
   let release
   respond = () => new Promise((resolve) => { release = resolve })
   const pending = store.getState().generateIdeas({ keyword: '교육', category: '교육', count: 7 })
@@ -53,9 +53,9 @@ try {
   assert.equal(store.getState().selectedIds.length, 7)
   await store.getState().combineIdeas()
   assert.equal(requests.length, 2)
-  release({ ideas: [{ id: 'server-combined', title: '결합 결과' }] })
+  release({ ideas: [{ id: 'server-combined', title: '결합 결과', description: '결합 설명', tags: [], parent_ids: items.map((item) => item.id) }] })
   await combining
-  assert.deepEqual(requests[1], { url: '/api/v1/combine', body: { idea_ids: items.map((item) => item.id) } })
+  assert.deepEqual(requests[1], { url: '/api/v1/combine', body: { selected_ideas: items.map((item) => ({ ...item, parent_ids: [] })) } })
   assert.equal(store.getState().ideas.length, 8)
   assert.deepEqual(store.getState().ideas.at(-1).parentIds, items.map((item) => item.id))
   assert.equal(store.getState().ideas.at(-1).id, 'server-combined')
@@ -66,7 +66,11 @@ try {
   store.getState().toggleIdea(items[0].id)
   respond = async () => ({ ideas: [{ id: 'server-recombined', title: '재결합 결과' }] })
   await store.getState().combineIdeas()
-  assert.deepEqual(requests.at(-1).body.idea_ids, ['server-combined', items[0].id])
+  assert.deepEqual(requests.at(-1).body.selected_ideas.map((idea) => idea.id), ['server-combined', items[0].id])
+  assert.deepEqual(requests.at(-1).body.selected_ideas[0].parent_ids, items.map((item) => item.id))
+  const requestCount = requests.length
+  for (const count of [0, 11, 1.5]) await store.getState().generateIdeas({ keyword: '교육', count })
+  assert.equal(requests.length, requestCount)
   const previousIdeas = store.getState().ideas
   respond = async () => { throw Object.assign(new Error('Network error'), { code: 'ERR_NETWORK' }) }
   await store.getState().generateIdeas({ keyword: '실패', count: 3 })

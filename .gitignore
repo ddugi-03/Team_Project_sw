@@ -47,6 +47,12 @@ dist/
 *.swp
 *.swo
 
+# Python test and tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.log
+
 # OS generated files
 .DS_Store
 Thumbs.db

@@ -12,7 +12,7 @@ function IdeaForm() {
 
   const handleSubmit = async (event) => {
     event.preventDefault()
-    if (!keyword.trim() || !Number.isInteger(count) || count < 1 || busy) return
+    if (!keyword.trim() || !Number.isInteger(count) || count < 1 || count > 10 || busy) return
     await generateIdeas({ keyword: keyword.trim(), category, count })
   }
 
@@ -25,7 +25,7 @@ function IdeaForm() {
         <textarea id="keyword" value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="예: 대학생을 위한 친환경 캠퍼스 서비스" rows="3" maxLength={500} required />
         <div className="form-grid">
           <label>생성 개수
-            <input type="number" min="1" step="1" required value={count} onChange={(event) => setCount(event.target.value === '' ? '' : Number(event.target.value))} />
+            <input type="number" min="1" max="10" step="1" required value={count} onChange={(event) => setCount(event.target.value === '' ? '' : Number(event.target.value))} />
           </label>
           <label>분야
             <select value={category} onChange={(event) => setCategory(event.target.value)}>
