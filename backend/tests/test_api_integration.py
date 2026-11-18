@@ -32,6 +32,7 @@ class APIIntegrationTests(unittest.IsolatedAsyncioTestCase):
             {"title": "학습 도우미", "description": "매일 학습을 돕는 서비스", "tags": ["학습", "일정", "관리"]},
             {"title": "집중 타이머", "description": "집중 시간을 관리하는 서비스", "tags": ["집중", "시간", "관리"]},
         ]
+        self.selected = [dict(item, id=id) for item, id in zip(self.ideas, ["a", "b"])]
         self.ollama_status = 200
         self.ollama_response = {"response": json.dumps({"ideas": self.ideas}, ensure_ascii=False)}
         self.ollama_error: type[httpx.RequestError] | None = None
@@ -54,7 +55,7 @@ class APIIntegrationTests(unittest.IsolatedAsyncioTestCase):
             raise self.ollama_error("mock upstream failure", request=request)
         return httpx.Response(self.ollama_status, json=self.ollama_response)
 
-    def assert_idea_response(self, response: httpx.Response, message: str) -> None:
+    def assert_idea_response(self, response: httpx.Response, message: str, parents=None) -> None:
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertEqual(set(body), {"status", "message", "ideas"})
@@ -65,11 +66,11 @@ class APIIntegrationTests(unittest.IsolatedAsyncioTestCase):
         for actual, expected in zip(body["ideas"], self.ideas):
             self.assertEqual(set(actual), {"id", "title", "description", "tags", "parent_ids"})
             UUID(actual["id"])
-            self.assertEqual(actual["parent_ids"], [])
+            self.assertEqual(actual["parent_ids"], parents or [])
             for field, value in expected.items():
                 self.assertEqual(actual[field], value)
 
-    def assert_ollama_payload(self) -> dict:
+    def assert_ollama_payload(self, temperature=0.7) -> dict:
         self.assertEqual(len(self.requests), 1)
         request = self.requests[0]
         self.assertEqual(request.method, "POST")
@@ -82,8 +83,8 @@ class APIIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["system"], ai_service.COMMON_SYSTEM_PROMPT)
         self.assertEqual(payload["format"], "json")
         self.assertEqual(payload["options"], {
-            "temperature": 0.7, "top_p": 0.9, "repeat_penalty": 1.1,
-            "num_ctx": 1024, "num_predict": 512,
+            "temperature": temperature, "top_p": 0.9, "repeat_penalty": 1.1,
+            "num_ctx": 1024, "num_predict": 600,
         })
         self.client_factory.assert_called_once_with(timeout=60.0)
         return payload
@@ -93,9 +94,9 @@ class APIIntegrationTests(unittest.IsolatedAsyncioTestCase):
             "keyword": "학습", "category": "교육", "count": 2, "creativity_level": 0.2,
         })
         self.assert_idea_response(response, "아이디어 생성 완료")
-        payload = self.assert_ollama_payload()
-        self.assertIn("- 주제 키워드: 학습", payload["prompt"])
-        self.assertIn("- 분야(카테고리): 교육", payload["prompt"])
+        payload = self.assert_ollama_payload(temperature=0.2)
+        self.assertIn("- 핵심 주제(키워드): 학습", payload["prompt"])
+        self.assertIn("- 적용 분야(카테고리): 교육", payload["prompt"])
         self.assertIn("- 생성 개수: 정확히 2개", payload["prompt"])
 
     async def test_generate_defaults_and_null_category(self) -> None:
@@ -105,16 +106,16 @@ class APIIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 response = await self.api.post("/api/v1/generate", json={"keyword": "학습", **extra})
                 self.assert_idea_response(response, "아이디어 생성 완료")
                 payload = json.loads(self.requests[0].content)
-                self.assertIn("- 분야(카테고리): 일반", payload["prompt"])
+                self.assertIn("- 적용 분야(카테고리): 일반", payload["prompt"])
                 self.assertIn("- 생성 개수: 정확히 3개", payload["prompt"])
 
     async def test_combine_response_and_async_client_flow(self) -> None:
         response = await self.api.post("/api/v1/combine", json={
-            "selected_ideas": self.ideas, "direction": "학습 효과 향상", "count": 2,
+            "selected_ideas": self.selected, "direction": "학습 효과 향상", "count": 2,
         })
-        self.assert_idea_response(response, "아이디어 조합 완료")
+        self.assert_idea_response(response, "아이디어 조합 완료", ["a", "b"])
         payload = self.assert_ollama_payload()
-        self.assertIn("새로운 융합 아이디어 2개", payload["prompt"])
+        self.assertIn("아이디어 2개", payload["prompt"])
         self.assertIn("학습 효과 향상", payload["prompt"])
         for idea in self.ideas:
             self.assertIn(idea["title"], payload["prompt"])
@@ -122,17 +123,17 @@ class APIIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_combine_defaults_and_null_direction(self) -> None:
         cases = [
-            ({}, "두 아이디어의 핵심 장점을 결합한 시너지 서비스"),
-            ({"direction": None}, "두 아이디어의 장점 결합"),
+            ({}, "두 아이디어의 장점을 결합하여 새로운 서비스 구상"),
+            ({"direction": None}, "두 아이디어의 장점을 결합하여 새로운 서비스 구상"),
         ]
         for extra, expected_direction in cases:
             with self.subTest(extra=extra):
                 self.requests.clear()
-                response = await self.api.post("/api/v1/combine", json={"selected_ideas": self.ideas, **extra})
-                self.assert_idea_response(response, "아이디어 조합 완료")
+                response = await self.api.post("/api/v1/combine", json={"selected_ideas": self.selected, **extra})
+                self.assert_idea_response(response, "아이디어 조합 완료", ["a", "b"])
                 payload = json.loads(self.requests[0].content)
                 self.assertIn(expected_direction, payload["prompt"])
-                self.assertIn("새로운 융합 아이디어 2개", payload["prompt"])
+                self.assertIn("아이디어 2개", payload["prompt"])
 
     async def test_remote_url_and_model_are_configurable(self) -> None:
         with patch.dict(os.environ, {
@@ -156,10 +157,10 @@ class APIIntegrationTests(unittest.IsolatedAsyncioTestCase):
             ("combine", {"idea_ids": ["one", "one"]}),
             ("combine", {"idea_ids": ["one", ""]}),
             ("combine", {}),
-            ("combine", {"idea_ids": ["one", "two"], "selected_ideas": self.ideas}),
-            ("combine", {"selected_ideas": self.ideas[:1]}),
-            ("combine", {"selected_ideas": self.ideas, "count": 0}),
-            ("combine", {"selected_ideas": self.ideas, "count": 6}),
+            ("combine", {"idea_ids": ["one", "two"], "selected_ideas": self.selected}),
+            ("combine", {"selected_ideas": self.selected[:1]}),
+            ("combine", {"selected_ideas": self.selected, "count": 0}),
+            ("combine", {"selected_ideas": self.selected, "count": 6}),
         ]
         for endpoint, body in cases:
             with self.subTest(endpoint=endpoint, body=body):
@@ -170,19 +171,17 @@ class APIIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_ollama_http_error_has_structured_response(self) -> None:
         self.ollama_status = 503
         response = await self.api.post("/api/v1/generate", json={"keyword": "학습"})
-        self.assertEqual(response.status_code, 502)
-        self.assertEqual(response.json()["error_code"], "AI_PARSE_ERROR")
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["error_code"], "OLLAMA_CONNECTION_ERROR")
         self.assertEqual(len(self.requests), 1)
 
     async def test_connection_and_timeout_errors_have_structured_response(self) -> None:
-        # TODO(BE-B): 현재 ai_service는 통신 오류도 AIResponseParseException으로 변환한다.
-        # OllamaConnectionException을 발생시키도록 BE-B가 정책을 확정하면 503으로 구분 가능.
         for error in (httpx.ConnectError, httpx.ReadTimeout):
             with self.subTest(error=error):
                 self.ollama_error = error
-                response = await self.api.post("/api/v1/combine", json={"selected_ideas": self.ideas})
-                self.assertEqual(response.status_code, 502)
-                self.assertEqual(response.json()["error_code"], "AI_PARSE_ERROR")
+                response = await self.api.post("/api/v1/combine", json={"selected_ideas": self.selected})
+                self.assertEqual(response.status_code, 503)
+                self.assertEqual(response.json()["error_code"], "OLLAMA_CONNECTION_ERROR")
 
     async def test_be_b_connection_handler_is_registered(self) -> None:
         with patch(
@@ -203,40 +202,31 @@ class APIIntegrationTests(unittest.IsolatedAsyncioTestCase):
         response = await self.api.post("/api/v1/generate", json={"keyword": "학습"})
         self.assertEqual(response.status_code, 502)
         self.assertEqual(response.json()["error_code"], "AI_PARSE_ERROR")
-        self.assertEqual(len(self.requests), 1)
-
-    async def test_frontend_id_only_combine_and_recombine(self) -> None:
-        # 실제 FE: generate로 받은 idea.id 목록만 combine에 전달한다.
-        generated = await self.api.post("/api/v1/generate", json={"keyword": "학습", "count": 2})
-        self.assertEqual(generated.status_code, 200)
-        ids = [idea["id"] for idea in generated.json()["ideas"]]
-
-        combined = await self.api.post("/api/v1/combine", json={"idea_ids": ids})
-        self.assert_idea_response(combined, "아이디어 조합 완료")
-        self.assertEqual(len(self.requests), 2)
-        payload = json.loads(self.requests[1].content)
-        for idea in self.ideas:
-            self.assertIn(idea["title"], payload["prompt"])
-            self.assertIn(idea["description"], payload["prompt"])
-
-        # 생성된 조합 결과도 다음 조합 요청에서 ID로 다시 사용할 수 있어야 한다.
-        next_id = combined.json()["ideas"][0]["id"]
-        subsequent = await self.api.post("/api/v1/combine", json={"idea_ids": [ids[0], next_id]})
-        self.assertEqual(subsequent.status_code, 200)
         self.assertEqual(len(self.requests), 3)
 
-    async def test_unknown_or_expired_idea_ids_return_404(self) -> None:
+    async def test_frontend_full_card_combine_and_recombine(self) -> None:
+        generated = await self.api.post("/api/v1/generate", json={"keyword": "학습", "count": 2})
+        cards = generated.json()["ideas"]
+        ids = [item["id"] for item in cards]
+        combined = await self.api.post("/api/v1/combine", json={"selected_ideas": cards})
+        self.assert_idea_response(combined, "아이디어 조합 완료", ids)
+        for item in cards:
+            self.assertIn(item["title"], json.loads(self.requests[1].content)["prompt"])
+        next_card = combined.json()["ideas"][0]
+        subsequent = await self.api.post("/api/v1/combine", json={"selected_ideas": [cards[0], next_card]})
+        self.assert_idea_response(subsequent, "아이디어 조합 완료", [ids[0], next_card["id"]])
+
+    async def test_id_only_payload_is_rejected_before_ai_call(self) -> None:
         response = await self.api.post("/api/v1/combine", json={"idea_ids": ["missing-a", "missing-b"]})
-        self.assertEqual(response.status_code, 404)
-        self.assertIn("다시 생성", response.json()["detail"])
+        self.assertEqual(response.status_code, 422)
         self.assertEqual(len(self.requests), 0)
 
-    async def test_registry_is_isolated_to_app_instance(self) -> None:
+    async def test_cards_can_be_combined_after_server_restart(self) -> None:
         generated = await self.api.post("/api/v1/generate", json={"keyword": "학습"})
-        ids = [item["id"] for item in generated.json()["ideas"]]
+        cards = generated.json()["ideas"]
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app()), base_url="http://new.test") as new_api:
-            response = await new_api.post("/api/v1/combine", json={"idea_ids": ids})
-        self.assertEqual(response.status_code, 404)
+            response = await new_api.post("/api/v1/combine", json={"selected_ideas": cards})
+        self.assert_idea_response(response, "아이디어 조합 완료", [item["id"] for item in cards])
 
     async def test_allowed_origin_is_returned_on_generate_response(self) -> None:
         response = await self.api.post(

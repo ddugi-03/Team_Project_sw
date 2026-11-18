@@ -1,6 +1,8 @@
 import json
 import unittest
 from unittest.mock import AsyncMock, patch
+from functools import partial
+from app.clients.ollama import OllamaClient
 
 import httpx
 from fastapi.testclient import TestClient
@@ -58,6 +60,7 @@ class ApiTests(unittest.TestCase):
 
     def test_invalid_selections_do_not_call_ai(self):
         invalid = [
+            {"selected_ideas": [{"title": "제목", "description": "설명"}, idea("b").model_dump()]},
             {"idea_ids": ["a", "b"]},
             {"selected_ideas": [idea("a").model_dump()]},
             {"selected_ideas": [idea("a").model_dump()] * 2},
@@ -86,9 +89,10 @@ class ApiTests(unittest.TestCase):
 
 class TransportTests(unittest.IsolatedAsyncioTestCase):
     async def invoke(self, handler):
-        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-        with patch("app.services.ai_service.httpx.AsyncClient", return_value=client):
-            return await _call_ollama("system", "prompt", "test")
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            with patch("app.services.ai_service.OllamaClient", side_effect=partial(OllamaClient, http_client=client)):
+                with patch("app.core.exceptions.asyncio.sleep", new_callable=AsyncMock):
+                    return await _call_ollama("system", "prompt", "test")
 
     async def test_timeout_and_connection_failures_are_mapped(self):
         for exception in [httpx.ReadTimeout, httpx.ConnectTimeout, httpx.ConnectError]:

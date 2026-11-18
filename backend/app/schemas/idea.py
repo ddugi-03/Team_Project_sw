@@ -1,5 +1,5 @@
 from typing import List, Optional, Literal
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 import uuid
 
 # ==========================================
@@ -13,6 +13,7 @@ class IdeaGenerateRequest(BaseModel):
     creativity_level: float = Field(default=0.7, ge=0.0, le=1.0, description="창의성 수치 (Temperature)")
 
 class IdeaCombineRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     selected_ideas: List["IdeaItem"] = Field(
         ..., 
         min_length=2, 
@@ -24,6 +25,15 @@ class IdeaCombineRequest(BaseModel):
     )
 
     count: int = Field(default=2, ge=1, le=5)
+
+    @field_validator("selected_ideas", mode="before")
+    @classmethod
+    def require_existing_ids(cls, ideas):
+        if isinstance(ideas, list) and any(
+            isinstance(idea, dict) and not idea.get("id") for idea in ideas
+        ):
+            raise ValueError("선택한 아이디어의 원본 ID가 필요합니다.")
+        return ideas
 
     @field_validator("selected_ideas")
     @classmethod
