@@ -5,11 +5,15 @@ function IdeaCard({ idea, index }) {
   const toggleIdea = useIdeaStore((state) => state.toggleIdea)
   const busy = useIdeaStore((state) => state.isGenerating || state.isCombining)
   const selected = selectedIds.includes(idea.id)
+  const depth = Math.max(0, (idea.level || 1) - 1)
+  const shade = Math.min(38, 46 * (1 - Math.exp(-depth / 3)))
+  const background = `rgb(${240 - shade} ${240 - shade * 1.12} ${235 - shade * 1.45})`
 
   return (
     <button
       type="button"
       className={`idea-card ${selected ? 'selected' : ''} ${idea.parentIds ? 'combined-card' : ''}`}
+      style={{ '--idea-background': background }}
       aria-pressed={selected}
       onClick={() => toggleIdea(idea.id)}
       disabled={busy}

@@ -10,7 +10,10 @@ const normalize = (items) => items.map((item, index) => ({
 }))
 
 const errorMessage = (error) => {
+  if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') return '응답 대기 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.'
   if (error.code === 'ERR_NETWORK') return '서버에 연결할 수 없습니다.'
+  const message = error.response?.data?.error?.message || error.response?.data?.message
+  if (typeof message === 'string' && message.trim()) return message
   if (error.response?.data?.detail) {
     const detail = error.response.data.detail
     return typeof detail === 'string' ? detail : '요청 형식을 확인해 주세요.'
@@ -22,10 +25,17 @@ export const useIdeaStore = create((set, get) => ({
   topic: '',
   ideas: [],
   selectedIds: [],
+  positions: {},
   isGenerating: false,
   isCombining: false,
   notice: null,
   dismissNotice: () => set({ notice: null }),
+  moveCard: (id, position) => set((state) => {
+    if (state.isGenerating || state.isCombining || !Number.isFinite(position.x) || !Number.isFinite(position.y)) return {}
+    if (id !== 'topic' && !state.ideas.some((idea) => idea.id === id)) return {}
+    return { positions: { ...state.positions, [id]: { x: Math.max(24, position.x), y: Math.max(24, position.y) } } }
+  }),
+  resetPositions: () => set((state) => state.isGenerating || state.isCombining ? {} : { positions: {} }),
   toggleIdea: (id) => set((state) => {
     if (state.isGenerating || state.isCombining) return {}
     if (state.selectedIds.includes(id)) {
@@ -44,6 +54,7 @@ export const useIdeaStore = create((set, get) => ({
         topic: params.keyword,
         ideas: normalize(result.ideas),
         selectedIds: [],
+        positions: {},
       })
     } catch (error) {
       set({ notice: { type: 'error', text: error.message === 'INVALID_RESPONSE' ? '아이디어를 불러오지 못했습니다.' : errorMessage(error) } })
