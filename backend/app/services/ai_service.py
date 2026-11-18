@@ -37,7 +37,8 @@ async def _call_ollama(
     system_prompt: str, 
     user_prompt: str, 
     task_name: str,
-    temperature: Optional[float] = None
+    temperature: Optional[float] = None,
+    expected_count: int | None = None,
 ) -> List[IdeaItem]:
     """
     Ollama API 공통 호출, 응답 속도(Latency) 측정 및 JSON 파싱 검증 헬퍼 함수
@@ -69,7 +70,7 @@ async def _call_ollama(
                 return raw_response
 
             # 파싱 실패 시 최대 3회 재시도
-            ideas = await execute_with_retry(request_ai_text, max_retries=3)
+            ideas = await execute_with_retry(request_ai_text, max_retries=3, expected_count=expected_count)
 
         elapsed = time.perf_counter() - start_time
         logger.info(f"[AI Latency] {task_name} 완료: {elapsed:.2f}초 소요")
@@ -128,7 +129,8 @@ async def generate_ideas_service(
         COMMON_SYSTEM_PROMPT, 
         user_prompt, 
         f"아이디어 생성({topic}, {count}개)",
-        temperature=creativity_level
+        temperature=creativity_level,
+        expected_count=count,
     )
     
 async def combine_ideas_service(
@@ -177,7 +179,7 @@ async def combine_ideas_service(
   ]
 }}"""
 
-    results = await _call_ollama(COMMON_SYSTEM_PROMPT, user_prompt, f"아이디어 조합({len(selected_ideas)}개 결합 -> {count}개 생성)")
+    results = await _call_ollama(COMMON_SYSTEM_PROMPT, user_prompt, f"아이디어 조합({len(selected_ideas)}개 결합 -> {count}개 생성)", expected_count=count)
     
     # 서버에서 직접 고유 ID와 부모 ID(parent_ids) 계보를 확정
     return [

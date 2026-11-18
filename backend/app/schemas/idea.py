@@ -56,6 +56,14 @@ class IdeaItem(BaseModel):
     tags: List[str] = Field(default_factory=list, description="관련 태그")
     parent_ids: List[str] = Field(default_factory=list, description="조합 원본 ID 리스트 (Excalidraw 엣지 연결용)")
 
+    @field_validator("title", "description")
+    @classmethod
+    def require_content(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("제목과 설명은 비어 있을 수 없습니다.")
+        return value
+
 # ==========================================
 # 3. 응답 및 공통 에러 스키마 (Response)
 # ==========================================

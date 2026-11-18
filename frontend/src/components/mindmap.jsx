@@ -30,7 +30,7 @@ function MindMap() {
 
   const changeZoom = (value, fit = false) => {
     const board = viewport.current
-    const nextZoom = clampZoom(value)
+    const nextZoom = fit ? value : clampZoom(value)
     if (!board) return
     const position = fit ? { left: boardWidth * nextZoom / 2, top: boardHeight * nextZoom / 2 } : zoomScroll(board.scrollLeft, board.scrollTop, board.clientWidth, board.clientHeight, zoom, nextZoom, true)
     if (nextZoom === zoom) {
