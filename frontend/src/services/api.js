@@ -19,6 +19,7 @@ export const requestCombination = async (ideas) => {
       tags: idea.tags,
       parent_ids: idea.parent_ids || idea.parentIds || [],
     })),
+    ...(import.meta.env.VITE_DEMO_MODE === 'true' ? { count: 1 } : {}),
   })
   return data
 }
