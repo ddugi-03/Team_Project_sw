@@ -4,11 +4,12 @@ import { clampZoom, fitZoom, zoomScroll } from '../src/utils/canvasZoom.js'
 assert.equal(clampZoom(-1), 0.1)
 assert.equal(clampZoom(2), 1.5)
 assert.equal(clampZoom(0.7 - 0.1), 0.6)
-for (const [width, height, boardWidth, boardHeight] of [[800, 600, 1800, 1400], [320, 400, 1100, 600], [1000, 700, 1100, 3000]]) {
+for (const [width, height, boardWidth, boardHeight] of [[800, 600, 1800, 1400], [320, 400, 1100, 600], [1000, 700, 1100, 3000], [800, 600, 1100, 10000], [320, 400, 1000000, 1000000]]) {
   const zoom = fitZoom(width, height, boardWidth, boardHeight)
   assert.ok(boardWidth * zoom <= width)
   assert.ok(boardHeight * zoom <= height)
 }
+assert.ok(fitZoom(800, 600, 1100, 10000) < 0.1)
 assert.equal(fitZoom(2000, 2000, 1100, 600), 1)
 const position = zoomScroll(500, 400, 800, 600, 1, 0.8)
 assert.equal((position.left + 400) / 0.8, 900)

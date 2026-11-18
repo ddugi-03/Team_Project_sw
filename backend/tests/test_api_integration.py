@@ -100,6 +100,8 @@ class APIIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("- 생성 개수: 정확히 2개", payload["prompt"])
 
     async def test_generate_defaults_and_null_category(self) -> None:
+        self.ideas.append({"title": "복습 도우미", "description": "복습을 돕습니다.", "tags": ["복습"]})
+        self.ollama_response = {"response": json.dumps({"ideas": self.ideas}, ensure_ascii=False)}
         for extra in ({}, {"category": None}):
             with self.subTest(extra=extra):
                 self.requests.clear()
@@ -140,7 +142,7 @@ class APIIntegrationTests(unittest.IsolatedAsyncioTestCase):
             "OLLAMA_BASE_URL": "https://ollama.example.test:11434/",
             "OLLAMA_MODEL": "configured-model:latest",
         }):
-            response = await self.api.post("/api/v1/generate", json={"keyword": "학습"})
+            response = await self.api.post("/api/v1/generate", json={"keyword": "학습", "count": 2})
         self.assert_idea_response(response, "아이디어 생성 완료")
         self.assertEqual(str(self.requests[0].url), "https://ollama.example.test:11434/api/generate")
         self.assertEqual(json.loads(self.requests[0].content)["model"], "configured-model:latest")
@@ -170,7 +172,7 @@ class APIIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_ollama_http_error_has_structured_response(self) -> None:
         self.ollama_status = 503
-        response = await self.api.post("/api/v1/generate", json={"keyword": "학습"})
+        response = await self.api.post("/api/v1/generate", json={"keyword": "학습", "count": 2})
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()["error_code"], "OLLAMA_CONNECTION_ERROR")
         self.assertEqual(len(self.requests), 1)
@@ -188,18 +190,18 @@ class APIIntegrationTests(unittest.IsolatedAsyncioTestCase):
             "app.api.v1.endpoints.generate.generate_ideas_service",
             side_effect=OllamaConnectionException(),
         ):
-            response = await self.api.post("/api/v1/generate", json={"keyword": "학습"})
+            response = await self.api.post("/api/v1/generate", json={"keyword": "학습", "count": 2})
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()["error_code"], "OLLAMA_CONNECTION_ERROR")
 
     async def test_existing_parser_accepts_markdown_json(self) -> None:
         self.ollama_response = {"response": f"```json\n{json.dumps({'ideas': self.ideas})}\n```"}
-        response = await self.api.post("/api/v1/generate", json={"keyword": "학습"})
+        response = await self.api.post("/api/v1/generate", json={"keyword": "학습", "count": 2})
         self.assert_idea_response(response, "아이디어 생성 완료")
 
     async def test_existing_parser_failure_has_structured_response(self) -> None:
         self.ollama_response = {"response": "invalid model output"}
-        response = await self.api.post("/api/v1/generate", json={"keyword": "학습"})
+        response = await self.api.post("/api/v1/generate", json={"keyword": "학습", "count": 2})
         self.assertEqual(response.status_code, 502)
         self.assertEqual(response.json()["error_code"], "AI_PARSE_ERROR")
         self.assertEqual(len(self.requests), 3)
@@ -222,7 +224,7 @@ class APIIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.requests), 0)
 
     async def test_cards_can_be_combined_after_server_restart(self) -> None:
-        generated = await self.api.post("/api/v1/generate", json={"keyword": "학습"})
+        generated = await self.api.post("/api/v1/generate", json={"keyword": "학습", "count": 2})
         cards = generated.json()["ideas"]
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app()), base_url="http://new.test") as new_api:
             response = await new_api.post("/api/v1/combine", json={"selected_ideas": cards})
@@ -230,7 +232,7 @@ class APIIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_allowed_origin_is_returned_on_generate_response(self) -> None:
         response = await self.api.post(
-            "/api/v1/generate", json={"keyword": "학습"},
+            "/api/v1/generate", json={"keyword": "학습", "count": 2},
             headers={"Origin": "http://localhost:5173"},
         )
         self.assert_idea_response(response, "아이디어 생성 완료")

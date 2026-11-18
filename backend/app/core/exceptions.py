@@ -50,7 +50,15 @@ def parse_and_validate_ai_json(raw_response: str) -> List[IdeaItem]:
         if not isinstance(parsed_data, list) or len(parsed_data) == 0:
             raise AIResponseParseException("추출된 아이디어 데이터가 비어 있거나 리스트가 아닙니다.", raw_response)
 
-        return [IdeaItem(**item) for item in parsed_data]
+        ideas = []
+        for item in parsed_data:
+            if not isinstance(item, dict):
+                raise TypeError("아이디어는 JSON 객체여야 합니다.")
+            # 모델은 내용만 제공합니다. ID와 계보는 서버가 관리합니다.
+            ideas.append(IdeaItem.model_validate({
+                key: item[key] for key in ("title", "description", "tags") if key in item
+            }))
+        return ideas
 
     except (json.JSONDecodeError, ValidationError, TypeError) as e:
         raise AIResponseParseException(f"JSON 파싱 또는 스키마 검증 실패: {str(e)}", raw_response)
@@ -58,7 +66,8 @@ def parse_and_validate_ai_json(raw_response: str) -> List[IdeaItem]:
 async def execute_with_retry(
     ai_call_func: Callable[[], Awaitable[str]], 
     max_retries: int = 3, 
-    delay: float = 0.5
+    delay: float = 0.5,
+    expected_count: int | None = None,
 ) -> List[IdeaItem]:
     """
     [백엔드 A 연동용 헬퍼 함수]
@@ -68,7 +77,12 @@ async def execute_with_retry(
     for attempt in range(1, max_retries + 1):
         try:
             raw_text = await ai_call_func()
-            return parse_and_validate_ai_json(raw_text)
+            ideas = parse_and_validate_ai_json(raw_text)
+            if expected_count is not None and len(ideas) != expected_count:
+                raise AIResponseParseException(
+                    f"아이디어 개수 불일치: 요청 {expected_count}개, 응답 {len(ideas)}개", raw_text
+                )
+            return ideas
         except AIResponseParseException as e:
             last_exception = e
             if attempt < max_retries:
