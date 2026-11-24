@@ -1,0 +1,18 @@
+{
+  "format": "idea-note-board",
+  "schema_version": 1,
+  "topic": "팀 일정",
+  "ideas": [
+    {"id": "a", "title": "시간표 도구", "description": "시간표에서 빈 시간을 찾습니다.", "tags": ["시간표"], "parent_ids": []},
+    {"id": "b", "title": "공동 일정", "description": "팀원의 가능한 시간을 모읍니다.", "tags": ["협업"], "parent_ids": []},
+    {"id": "c", "title": "팀 공강 모임", "description": "각 시간표의 빈 시간을 비교해 공동 모임 시간을 제안합니다.", "tags": ["모임"], "parent_ids": ["a", "b"]},
+    {"id": "d", "title": "모임 재조율", "description": "시간표 변경을 반영해 팀 공강 모임 시간을 다시 제안합니다.", "tags": ["일정"], "parent_ids": ["a", "c"]}
+  ],
+  "positions": {
+    "topic": {"x": 24, "y": 24},
+    "a": {"x": 340, "y": 100},
+    "b": {"x": 340, "y": 380},
+    "c": {"x": 700, "y": 240},
+    "d": {"x": 1060, "y": 240}
+  }
+}
